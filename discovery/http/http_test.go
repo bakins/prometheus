@@ -15,7 +15,6 @@ package http
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -36,7 +35,7 @@ func TestHTTP(t *testing.T) {
 		expectedError string
 		expected      []*targetgroup.Group
 	}{
-		{
+		/*{
 			name:          "empty body",
 			expectedError: "unexpected end of JSON input",
 		},
@@ -47,17 +46,17 @@ func TestHTTP(t *testing.T) {
 		},
 		{
 			name:          "invalid json",
-			body:          "{}",
-			expectedError: `cannot unmarshal object into Go value of type []`,
+			body:          "[]",
+			expectedError: `cannot unmarshal array into Go value of type struct`,
+		},*/
+		{
+			name:     "empty",
+			body:     `{}`,
+			expected: []*targetgroup.Group{{}},
 		},
 		{
-			name:     "empty array",
-			body:     `[]`,
-			expected: []*targetgroup.Group{},
-		},
-		{
-			name: "single target group",
-			body: `[ {"targets": [ "somehost:8080", "anotherhost:9090" ] }]`,
+			name: "two tagets",
+			body: `{"targets": [ "somehost:8080", "anotherhost:9090" ]}`,
 			expected: []*targetgroup.Group{
 				{
 					Targets: []model.LabelSet{
@@ -76,7 +75,7 @@ func TestHTTP(t *testing.T) {
 	for _, tc := range testCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
+			//t.Parallel()
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if tc.httpStatus != http.StatusOK && tc.httpStatus != 0 {
 					w.WriteHeader(tc.httpStatus)
@@ -90,13 +89,7 @@ func TestHTTP(t *testing.T) {
 			s := httptest.NewServer(handler)
 			defer s.Close()
 
-			for _, tg := range tc.expected {
-				if tg.Labels == nil {
-					tg.Labels = model.LabelSet{}
-				}
-				tg.Labels[httpSourceLabel] = model.LabelValue(s.URL)
-				tg.Source = fmt.Sprintf("%s:%d", s.URL, hashForTargetGroup(tg))
-			}
+			fillInTargetGroups(s.URL, tc.expected)
 
 			u, err := url.Parse(s.URL)
 			testutil.Ok(t, err)
@@ -127,168 +120,16 @@ func TestHTTP(t *testing.T) {
 
 }
 
-func TestHTTPAddAndDelete(t *testing.T) {
-	testCases := []struct {
-		name      string
-		responses []string
-		expected  [][]*targetgroup.Group
-	}{
-		{
-			name: "same response",
-			responses: []string{
-				`[ {"targets": [ "somehost:8080", "anotherhost:9090" ] }]`,
-				`[ {"targets": [ "somehost:8080", "anotherhost:9090" ] }]`,
-			},
-			expected: [][]*targetgroup.Group{
-				{
-					{
-						Targets: []model.LabelSet{
-							{
-								model.AddressLabel: model.LabelValue("somehost:8080"),
-							},
-							{
-								model.AddressLabel: model.LabelValue("anotherhost:9090"),
-							},
-						},
-					},
-				},
-				{
-					{
-						Targets: []model.LabelSet{
-							{
-								model.AddressLabel: model.LabelValue("somehost:8080"),
-							},
-							{
-								model.AddressLabel: model.LabelValue("anotherhost:9090"),
-							},
-						},
-					},
-				},
-			},
-		},
-		{
-			name: "remove group",
-			responses: []string{
-				`[ {"targets": [ "somehost:8080", "anotherhost:9090" ] }, {"targets": [ "yetanother:8080"] }]`,
-				`[ {"targets": [ "somehost:8080", "anotherhost:9090" ] }]`,
-			},
-			expected: [][]*targetgroup.Group{
-				{
-					{
-						Targets: []model.LabelSet{
-							{
-								model.AddressLabel: model.LabelValue("somehost:8080"),
-							},
-							{
-								model.AddressLabel: model.LabelValue("anotherhost:9090"),
-							},
-						},
-					},
-					{
-						Targets: []model.LabelSet{
-							{
-								model.AddressLabel: model.LabelValue("yetanother:8080"),
-							},
-						},
-					},
-				},
-				{
-					{
-						Targets: []model.LabelSet{
-							{
-								model.AddressLabel: model.LabelValue("somehost:8080"),
-							},
-							{
-								model.AddressLabel: model.LabelValue("anotherhost:9090"),
-							},
-						},
-					},
-				},
-			},
-		},
-		{
-			name: "add group",
-			responses: []string{
-				`[ {"targets": [ "somehost:8080", "anotherhost:9090" ] }]`,
-				`[ {"targets": [ "somehost:8080", "anotherhost:9090" ] }, {"targets": [ "yetanother:8080"] }]`,
-			},
-			expected: [][]*targetgroup.Group{
-				{
-					{
-						Targets: []model.LabelSet{
-							{
-								model.AddressLabel: model.LabelValue("somehost:8080"),
-							},
-							{
-								model.AddressLabel: model.LabelValue("anotherhost:9090"),
-							},
-						},
-					},
-				},
-				{
-					{
-						Targets: []model.LabelSet{
-							{
-								model.AddressLabel: model.LabelValue("somehost:8080"),
-							},
-							{
-								model.AddressLabel: model.LabelValue("anotherhost:9090"),
-							},
-						},
-					},
-					{
-						Targets: []model.LabelSet{
-							{
-								model.AddressLabel: model.LabelValue("yetanother:8080"),
-							},
-						},
-					},
-				},
-			},
-		},
-	}
+func fillInTargetGroups(u string, tgs []*targetgroup.Group) {
+	for _, tg := range tgs {
+		tg.Source = u
 
-	for _, tc := range testCases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			for i, resp := range tc.responses {
-				handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-
-					w.WriteHeader(http.StatusOK)
-
-					_, _ = w.Write([]byte(resp))
-				})
-
-				s := httptest.NewServer(handler)
-				defer s.Close()
-
-				expected := tc.expected[i]
-				for _, tg := range expected {
-					if tg.Labels == nil {
-						tg.Labels = model.LabelSet{}
-					}
-					tg.Labels[httpSourceLabel] = model.LabelValue(s.URL)
-					tg.Source = fmt.Sprintf("%s:%d", s.URL, hashForTargetGroup(tg))
-				}
-
-				u, err := url.Parse(s.URL)
-				testutil.Ok(t, err)
-
-				conf := SDConfig{
-					URL: config.URL{
-						URL: u,
-					},
-				}
-
-				sd, err := NewDiscovery(&conf, nil)
-				testutil.Ok(t, err)
-
-				tgs, err := sd.refresh(context.Background())
-
-				testutil.Ok(t, err)
-				testutil.Equals(t, expected, tgs)
-			}
-		})
+		if len(tg.Targets) == 0 {
+			continue
+		}
+		if tg.Labels == nil {
+			tg.Labels = model.LabelSet{}
+		}
+		tg.Labels[httpSourceLabel] = model.LabelValue(u)
 	}
 }

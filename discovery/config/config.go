@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/prometheus/discovery/ec2"
 	"github.com/prometheus/prometheus/discovery/file"
 	"github.com/prometheus/prometheus/discovery/gce"
+	"github.com/prometheus/prometheus/discovery/http"
 	"github.com/prometheus/prometheus/discovery/kubernetes"
 	"github.com/prometheus/prometheus/discovery/marathon"
 	"github.com/prometheus/prometheus/discovery/openstack"
@@ -58,6 +59,8 @@ type ServiceDiscoveryConfig struct {
 	AzureSDConfigs []*azure.SDConfig `yaml:"azure_sd_configs,omitempty"`
 	// List of Triton service discovery configurations.
 	TritonSDConfigs []*triton.SDConfig `yaml:"triton_sd_configs,omitempty"`
+	// Listo of HTTP ervice discovery configurations.
+	HTTPSDConfigs []*http.SDConfig `yaml:"http_sd_configs,omitempty"`
 }
 
 // Validate validates the ServiceDiscoveryConfig.
@@ -117,10 +120,16 @@ func (c *ServiceDiscoveryConfig) Validate() error {
 			return errors.New("empty or null section in serverset_sd_configs")
 		}
 	}
+	for _, cfg := range c.HTTPSDConfigs {
+		if cfg == nil {
+			return errors.New("empty or null section in http_configs")
+		}
+	}
 	for _, cfg := range c.StaticConfigs {
 		if cfg == nil {
 			return errors.New("empty or null section in static_configs")
 		}
 	}
+
 	return nil
 }

@@ -16,14 +16,11 @@ package http
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/url"
-	"sort"
 	"time"
 
-	"github.com/cespare/xxhash"
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/config"
@@ -146,50 +143,25 @@ func (d *Discovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 		return nil, errors.Wrapf(err, "http_sd: failed to read body from url %s", u)
 	}
 
-	var targetGroups []*targetgroup.Group
+	var tg targetgroup.Group
 
-	if err := json.Unmarshal(body, &targetGroups); err != nil {
+	if err := json.Unmarshal(body, &tg); err != nil {
 		return nil, errors.Wrapf(err, "http_sd: failed to parse body from url %s", u)
 	}
 
-	ref := map[string]bool{}
+	tg.Source = u
 
-	for _, tg := range targetGroups {
-		if tg.Labels == nil {
-			tg.Labels = model.LabelSet{}
-		}
-		tg.Labels[httpSourceLabel] = model.LabelValue(u)
-		tg.Source = fmt.Sprintf("%s:%d", u, hashForTargetGroup(tg))
-		ref[tg.Source] = true
+	if len(tg.Targets) == 0 {
+		tg.Labels = nil
+		tg.Targets = nil
+		return []*targetgroup.Group{&tg}, nil
 	}
 
-	for k := range d.lastRefresh {
-		_, ok := ref[k]
-		if ok {
-			// remove group
-			tg := targetgroup.Group{Source: k}
-			targetGroups = append(targetGroups, &tg)
-		}
+	if tg.Labels == nil {
+		tg.Labels = model.LabelSet{}
 	}
 
-	return targetGroups, nil
-}
+	tg.Labels[httpSourceLabel] = model.LabelValue(u)
 
-const sep = '\xff'
-
-func hashForTargetGroup(tg *targetgroup.Group) uint64 {
-	var hosts []string
-	for _, t := range tg.Targets {
-		hosts = append(hosts, string(t[model.AddressLabel]))
-	}
-
-	sort.Strings(hosts)
-
-	b := make([]byte, 0, 1024)
-
-	for _, h := range hosts {
-		b = append(b, h...)
-		b = append(b, sep)
-	}
-	return xxhash.Sum64(b)
+	return []*targetgroup.Group{&tg}, nil
 }
