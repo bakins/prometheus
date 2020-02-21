@@ -24,6 +24,7 @@ import (
 
 	"github.com/go-kit/kit/log"
 	"github.com/pkg/errors"
+
 	"github.com/prometheus/common/config"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/discovery/refresh"
@@ -162,11 +163,11 @@ func (d *Discovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 
 	for source := range d.lastRefresh {
 		if _, ok := ref[source]; !ok {
-			tg := targetgroup.Group {
+			tg := targetgroup.Group{
 				Source: source,
 			}
 			targetgroups = append(targetgroups, &tg)
-		
+
 		}
 	}
 

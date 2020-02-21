@@ -59,7 +59,7 @@ type ServiceDiscoveryConfig struct {
 	AzureSDConfigs []*azure.SDConfig `yaml:"azure_sd_configs,omitempty"`
 	// List of Triton service discovery configurations.
 	TritonSDConfigs []*triton.SDConfig `yaml:"triton_sd_configs,omitempty"`
-	// Listo of HTTP ervice discovery configurations.
+	// List of HTTP service discovery configurations.
 	HTTPSDConfigs []*http.SDConfig `yaml:"http_sd_configs,omitempty"`
 }
 
@@ -130,6 +130,5 @@ func (c *ServiceDiscoveryConfig) Validate() error {
 			return errors.New("empty or null section in static_configs")
 		}
 	}
-
 	return nil
 }
