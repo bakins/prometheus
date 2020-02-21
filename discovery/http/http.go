@@ -16,6 +16,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -68,10 +69,12 @@ func (c *SDConfig) UnmarshalYAML(unmarshal func(interface{}) error) error {
 // targets from an HTTP service.
 type Discovery struct {
 	*refresh.Discovery
-	url         *url.URL
-	client      *http.Client
-	lastRefresh map[string]bool
-	etag        string
+	url    *url.URL
+	client *http.Client
+
+	// lastRefresh stores which files were found during the last refresh
+	// This is used to detect deleted target groups.
+	lastRefresh map[string]struct{}
 }
 
 // NewDiscovery creates a new HTTP discovery.
@@ -90,14 +93,13 @@ func NewDiscovery(conf *SDConfig, logger log.Logger) (*Discovery, error) {
 	}
 
 	d := &Discovery{
-		url:         conf.URL.URL,
-		client:      client,
-		lastRefresh: make(map[string]bool),
+		url:    conf.URL.URL,
+		client: client,
 	}
 
 	d.Discovery = refresh.NewDiscovery(
 		logger,
-		"dns",
+		"http",
 		time.Duration(conf.RefreshInterval),
 		d.refresh,
 	)
@@ -120,10 +122,6 @@ func (d *Discovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 
 	req = req.WithContext(ctx)
 
-	if d.etag != "" {
-		req.Header.Set("If-None-Match", d.etag)
-	}
-
 	resp, err := d.client.Do(req)
 	if err != nil {
 		return nil, errors.Wrapf(err, "http_sd: failed to get url %s", u)
@@ -143,25 +141,36 @@ func (d *Discovery) refresh(ctx context.Context) ([]*targetgroup.Group, error) {
 		return nil, errors.Wrapf(err, "http_sd: failed to read body from url %s", u)
 	}
 
-	var tg targetgroup.Group
+	var targetgroups []*targetgroup.Group
 
-	if err := json.Unmarshal(body, &tg); err != nil {
+	if err := json.Unmarshal(body, &targetgroups); err != nil {
 		return nil, errors.Wrapf(err, "http_sd: failed to parse body from url %s", u)
 	}
 
-	tg.Source = u
+	ref := map[string]struct{}{}
+	for i, tg := range targetgroups {
+		tg.Source = fmt.Sprintf("%s:%d", u, i)
 
-	if len(tg.Targets) == 0 {
-		tg.Labels = nil
-		tg.Targets = nil
-		return []*targetgroup.Group{&tg}, nil
+		if tg.Labels == nil {
+			tg.Labels = model.LabelSet{}
+		}
+
+		tg.Labels[httpSourceLabel] = model.LabelValue(u)
+
+		ref[tg.Source] = struct{}{}
 	}
 
-	if tg.Labels == nil {
-		tg.Labels = model.LabelSet{}
+	for source := range d.lastRefresh {
+		if _, ok := ref[source]; !ok {
+			tg := targetgroup.Group {
+				Source: source,
+			}
+			targetgroups = append(targetgroups, &tg)
+		
+		}
 	}
 
-	tg.Labels[httpSourceLabel] = model.LabelValue(u)
+	d.lastRefresh = ref
 
-	return []*targetgroup.Group{&tg}, nil
+	return targetgroups, nil
 }

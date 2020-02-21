@@ -15,6 +15,7 @@ package http
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -30,13 +31,14 @@ import (
 func TestHTTP(t *testing.T) {
 	testCases := []struct {
 		name          string
-		body          string
+		bodies        []string
 		httpStatus    int
 		expectedError string
-		expected      []*targetgroup.Group
+		expected      [][]*targetgroup.Group
 	}{
-		/*{
+		{
 			name:          "empty body",
+			httpStatus:    http.StatusOK,
 			expectedError: "unexpected end of JSON input",
 		},
 		{
@@ -46,27 +48,121 @@ func TestHTTP(t *testing.T) {
 		},
 		{
 			name:          "invalid json",
-			body:          "[]",
-			expectedError: `cannot unmarshal array into Go value of type struct`,
-		},*/
-		{
-			name:     "empty",
-			body:     `{}`,
-			expected: []*targetgroup.Group{{}},
+			bodies:        []string{"{}"},
+			httpStatus:    http.StatusOK,
+			expectedError: `cannot unmarshal object into Go value`,
 		},
 		{
-			name: "two tagets",
-			body: `{"targets": [ "somehost:8080", "anotherhost:9090" ]}`,
-			expected: []*targetgroup.Group{
+			name:       "empty",
+			bodies:     []string{`[]`},
+			httpStatus: http.StatusOK,
+			expected:   [][]*targetgroup.Group{{}},
+		},
+		{
+			name:       "one target group",
+			bodies:     []string{`[ {"targets": [ "somehost:8080", "anotherhost:9090" ]} ]`},
+			httpStatus: http.StatusOK,
+			expected: [][]*targetgroup.Group{
 				{
-					Targets: []model.LabelSet{
-						{
-							model.AddressLabel: model.LabelValue("somehost:8080"),
-						},
-						{
-							model.AddressLabel: model.LabelValue("anotherhost:9090"),
+					{
+						Targets: []model.LabelSet{
+							{
+								model.AddressLabel: model.LabelValue("somehost:8080"),
+							},
+							{
+								model.AddressLabel: model.LabelValue("anotherhost:9090"),
+							},
 						},
 					},
+				},
+			},
+		},
+		{
+			name: "add target group",
+			bodies: []string{
+				`[ {"targets": [ "somehost:8080", "anotherhost:9090" ]} ]`,
+				`[ {"targets": [ "somehost:8080", "anotherhost:9090" ]}, {"targets": [ "abc:8080", "xyz:9090" ]} ]`,
+			},
+			httpStatus: http.StatusOK,
+			expected: [][]*targetgroup.Group{
+				{
+					{
+						Targets: []model.LabelSet{
+							{
+								model.AddressLabel: model.LabelValue("somehost:8080"),
+							},
+							{
+								model.AddressLabel: model.LabelValue("anotherhost:9090"),
+							},
+						},
+					},
+				},
+				{
+					{
+						Targets: []model.LabelSet{
+							{
+								model.AddressLabel: model.LabelValue("somehost:8080"),
+							},
+							{
+								model.AddressLabel: model.LabelValue("anotherhost:9090"),
+							},
+						},
+					},
+					{
+						Targets: []model.LabelSet{
+							{
+								model.AddressLabel: model.LabelValue("abc:8080"),
+							},
+							{
+								model.AddressLabel: model.LabelValue("xyz:9090"),
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "remove target group",
+			bodies: []string{
+				`[ {"targets": [ "somehost:8080", "anotherhost:9090" ]}, {"targets": [ "abc:8080", "xyz:9090" ]} ]`,
+				`[ {"targets": [ "somehost:8080", "anotherhost:9090" ]} ]`,
+			},
+			httpStatus: http.StatusOK,
+			expected: [][]*targetgroup.Group{
+				{
+					{
+						Targets: []model.LabelSet{
+							{
+								model.AddressLabel: model.LabelValue("somehost:8080"),
+							},
+							{
+								model.AddressLabel: model.LabelValue("anotherhost:9090"),
+							},
+						},
+					},
+					{
+						Targets: []model.LabelSet{
+							{
+								model.AddressLabel: model.LabelValue("abc:8080"),
+							},
+							{
+								model.AddressLabel: model.LabelValue("xyz:9090"),
+							},
+						},
+					},
+				},
+				{
+					{
+						Targets: []model.LabelSet{
+							{
+								model.AddressLabel: model.LabelValue("somehost:8080"),
+							},
+							{
+								model.AddressLabel: model.LabelValue("anotherhost:9090"),
+							},
+						},
+					},
+					{},
 				},
 			},
 		},
@@ -76,20 +172,13 @@ func TestHTTP(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			//t.Parallel()
-			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if tc.httpStatus != http.StatusOK && tc.httpStatus != 0 {
-					w.WriteHeader(tc.httpStatus)
-					return
-				}
-				w.WriteHeader(http.StatusOK)
 
-				_, _ = w.Write([]byte(tc.body))
-			})
+			handler := &testHandler{
+				statusCode: tc.httpStatus,
+			}
 
 			s := httptest.NewServer(handler)
 			defer s.Close()
-
-			fillInTargetGroups(s.URL, tc.expected)
 
 			u, err := url.Parse(s.URL)
 			testutil.Ok(t, err)
@@ -103,26 +192,39 @@ func TestHTTP(t *testing.T) {
 			sd, err := NewDiscovery(&conf, nil)
 			testutil.Ok(t, err)
 
-			tgs, err := sd.refresh(context.Background())
+			for i, body := range tc.bodies {
+				handler.body = body
 
-			if tc.expectedError != "" {
-				testutil.NotOk(t, err)
-				if !strings.Contains(err.Error(), tc.expectedError) {
-					t.Fatal("error did not contain expected text")
+				tgs, err := sd.refresh(context.Background())
+
+				if tc.expectedError != "" {
+					testutil.NotOk(t, err)
+					if !strings.Contains(err.Error(), tc.expectedError) {
+						t.Fatal("error did not contain expected text")
+					}
+					return
 				}
-				return
+
+				expected := tc.expected[i]
+
+				fillInTargetGroups(s.URL, expected)
+
+				testutil.Ok(t, err)
+				testutil.Equals(t, len(expected), len(tgs))
+
+				for i := range expected {
+					testutil.Equals(t, expected[i], tgs[i])
+				}
 			}
 
-			testutil.Ok(t, err)
-			testutil.Equals(t, tc.expected, tgs)
 		})
 	}
 
 }
 
 func fillInTargetGroups(u string, tgs []*targetgroup.Group) {
-	for _, tg := range tgs {
-		tg.Source = u
+	for i, tg := range tgs {
+		tg.Source = fmt.Sprintf("%s:%d", u, i)
 
 		if len(tg.Targets) == 0 {
 			continue
@@ -131,5 +233,18 @@ func fillInTargetGroups(u string, tgs []*targetgroup.Group) {
 			tg.Labels = model.LabelSet{}
 		}
 		tg.Labels[httpSourceLabel] = model.LabelValue(u)
+	}
+}
+
+type testHandler struct {
+	statusCode int
+	body       string
+}
+
+func (t *testHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(t.statusCode)
+
+	if t.body != "" {
+		_, _ = w.Write([]byte(t.body))
 	}
 }
