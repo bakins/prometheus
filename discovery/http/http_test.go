@@ -219,7 +219,6 @@ func TestHTTP(t *testing.T) {
 
 		})
 	}
-
 }
 
 func fillInTargetGroups(u string, tgs []*targetgroup.Group) {
